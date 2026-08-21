@@ -17,14 +17,12 @@ export class AuthController {
   @Throttle(AUTH_THROTTLE)
   @Post()
   async createUser(@Body() dto: RegisterDto) {
-    console.log('Registering user with email:', dto.email);
     return this.authService.registerUser(dto.email, dto.password);
   }
 
   @Throttle(AUTH_THROTTLE)
   @Post('login')
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
-    console.log('Login attempt for user:', dto.email);
     const { token } = await this.authService.validateUser(dto.email, dto.password);
 
     // Set JWT as cookie

@@ -1,4 +1,4 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
@@ -12,7 +12,6 @@ export class UsersService {
   }
 
   async createUser(email: string, password: string){
-    console.log('Creating user with email:', email);
     return this.prisma.user.create({
       data: {
         email,

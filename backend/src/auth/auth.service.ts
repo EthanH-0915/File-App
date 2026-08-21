@@ -3,6 +3,13 @@ import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import * as bcrypt from 'bcrypt';
 
+// Hash of a fixed, unused password. Compared against when no user/passwordHash
+// exists, so a login attempt for a nonexistent email takes the same time as one
+// for a real email with a wrong password — otherwise the fast "no compare" path
+// for missing users lets an attacker enumerate registered emails by timing.
+const DUMMY_PASSWORD_HASH =
+  '$2b$10$xxEO9BH8UenI3JdUTq6uE.tC09YF0B7l7laHX4XKpes8JTdssdOTW';
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -12,19 +19,13 @@ export class AuthService {
 
   async validateUser(email: string, password: string) {
     const user = await this.usersService.findByEmail(email);
-    if (!user) {
-        console.log('User not found with email:', email);
-      throw new UnauthorizedException('Invalid credentials');
-    }
-    
-    if (!user.passwordHash) {
-        console.log('No password set for user:', email);
-        throw new UnauthorizedException('Invalid credentials');
-    }
 
-    const passwordValid = await bcrypt.compare(password, user.passwordHash);
-    if (!passwordValid) {
-      console.log('Invalid credentials for user:', email);
+    const passwordValid = await bcrypt.compare(
+      password,
+      user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+    );
+
+    if (!user || !user.passwordHash || !passwordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 

@@ -74,8 +74,8 @@ export default function Home() {
 
       <div className="flex flex-1 overflow-hidden relative">
         <aside className={`
-          ${isMenuOpen ? 'translate-x-0' : '-translate-x-full'} 
-          md:translate-x-0 fixed md:relative z-10 w-64 bg-white h-screen
+          ${isMenuOpen ? 'translate-x-0' : '-translate-x-full'}
+          md:translate-x-0 fixed md:relative top-16 md:top-0 bottom-0 md:bottom-auto left-0 z-10 w-64 bg-white overflow-y-auto
           transition-transform duration-300 ease-in-out
         `}>
           <nav className="p-4 space-y-5">

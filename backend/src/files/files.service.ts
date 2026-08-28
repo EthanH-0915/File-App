@@ -1,48 +1,110 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { FileStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from './s3.service';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
-import { MAX_UPLOAD_SIZE_BYTES } from './constants';
+import { MAX_UPLOAD_SIZE_BYTES, PENDING_UPLOAD_TTL_MS } from './constants';
+
+// Fields safe to hand back to the client. s3Key and ownerId are internal
+// storage details and deliberately excluded.
+const FILE_SELECT = {
+  id: true,
+  filename: true,
+  mimeType: true,
+  size: true,
+  createdAt: true,
+} as const;
 
 @Injectable()
 export class FilesService {
+  private readonly logger = new Logger(FilesService.name);
+
   constructor(
     private prisma: PrismaService,
     private s3: S3Service,
   ) {}
 
   async createUploadUrl(ownerId: string, dto: CreateUploadUrlDto) {
+    await this.reapAbandonedUploads(ownerId);
+
     const s3Key = `files/${ownerId}/${randomUUID()}`;
 
-    const file = await this.prisma.file.create({
-      data: {
-        filename: dto.filename,
-        mimeType: dto.mimeType,
-        size: dto.size,
-        s3Key,
-        ownerId,
-      },
-    });
-
+    // Presign before writing the row: if this throws, we don't leave a
+    // PENDING record behind for an upload that was never even offered.
     const { url, fields } = await this.s3.createPresignedPost(
       s3Key,
       dto.mimeType,
       MAX_UPLOAD_SIZE_BYTES,
     );
 
+    const file = await this.prisma.file.create({
+      data: {
+        filename: dto.filename,
+        mimeType: dto.mimeType,
+        // Provisional. completeUpload replaces this with the real
+        // ContentLength once the object is confirmed in S3.
+        size: dto.size,
+        s3Key,
+        ownerId,
+        status: FileStatus.PENDING,
+      },
+    });
+
     return { fileId: file.id, url, fields };
+  }
+
+  // Called by the client after it has POSTed the object to S3. Verifies the
+  // object is really there and records its true size, which is the only
+  // point at which a file becomes visible in listings.
+  async completeUpload(ownerId: string, id: string) {
+    const file = await this.findOwnedOrThrow(ownerId, id);
+
+    if (file.status === FileStatus.READY) {
+      return { id: file.id, size: file.size };
+    }
+
+    const size = await this.s3.getObjectSize(file.s3Key);
+    if (size === null) {
+      throw new BadRequestException('Upload was not completed');
+    }
+
+    // S3's content-length-range condition should already have rejected both
+    // of these, so this is belt-and-braces against the policy and these
+    // bounds drifting apart.
+    if (size < 1 || size > MAX_UPLOAD_SIZE_BYTES) {
+      await this.discard(file.id, file.s3Key);
+      throw new BadRequestException('Uploaded file has an invalid size');
+    }
+
+    const updated = await this.prisma.file.update({
+      where: { id: file.id },
+      data: { size, status: FileStatus.READY },
+      select: FILE_SELECT,
+    });
+
+    return updated;
   }
 
   async listFiles(ownerId: string) {
     return this.prisma.file.findMany({
-      where: { ownerId },
+      where: { ownerId, status: FileStatus.READY },
       orderBy: { createdAt: 'desc' },
+      select: FILE_SELECT,
     });
   }
 
   async getDownloadUrl(ownerId: string, id: string) {
     const file = await this.findOwnedOrThrow(ownerId, id);
+    if (file.status !== FileStatus.READY) {
+      throw new NotFoundException('File not found');
+    }
+
     const url = await this.s3.getPresignedDownloadUrl(
       file.s3Key,
       file.filename,
@@ -53,16 +115,44 @@ export class FilesService {
 
   async deleteFile(ownerId: string, id: string) {
     const file = await this.findOwnedOrThrow(ownerId, id);
-
-    await this.prisma.file.delete({ where: { id: file.id } });
-
-    try {
-      await this.s3.deleteObject(file.s3Key);
-    } catch (err) {
-      console.error(`Failed to delete S3 object ${file.s3Key}:`, err);
-    }
-
+    await this.discard(file.id, file.s3Key);
     return { success: true };
+  }
+
+  // Removes the S3 object before the row, so a failed delete leaves a row
+  // that still names the key and can be retried, rather than an orphaned
+  // object no record points at any more.
+  private async discard(id: string, s3Key: string) {
+    await this.s3.deleteObject(s3Key);
+    await this.prisma.file.delete({ where: { id } });
+  }
+
+  // Uploads the client never confirmed: either it never reached S3, or it
+  // did and the completion call was lost. Both leave a PENDING row that
+  // would otherwise sit in the database forever.
+  private async reapAbandonedUploads(ownerId: string) {
+    const cutoff = new Date(Date.now() - PENDING_UPLOAD_TTL_MS);
+    const stale = await this.prisma.file.findMany({
+      where: {
+        ownerId,
+        status: FileStatus.PENDING,
+        createdAt: { lt: cutoff },
+      },
+      select: { id: true, s3Key: true },
+    });
+
+    for (const file of stale) {
+      try {
+        await this.discard(file.id, file.s3Key);
+      } catch (err) {
+        // Best effort: a failure here must not block the new upload. The
+        // row stays PENDING and will be retried on the next request.
+        this.logger.warn(
+          `Failed to reap abandoned upload ${file.id} (${file.s3Key})`,
+          err instanceof Error ? err.stack : undefined,
+        );
+      }
+    }
   }
 
   private async findOwnedOrThrow(ownerId: string, id: string) {

@@ -23,16 +23,26 @@ model User {
   files        File[]
 }
 
+enum FileStatus {
+  // Row exists, but the client has not confirmed the S3 upload yet.
+  PENDING
+  // Object verified present in S3; `size` is its true ContentLength.
+  READY
+}
+
 model File {
-  id        String   @id @default(uuid())
+  id        String     @id @default(uuid())
   filename  String
   mimeType  String
+  // Client-claimed at upload-url time, overwritten with the object's real
+  // ContentLength once the upload is confirmed.
   size      Int
-  s3Key     String   @unique
+  s3Key     String     @unique
+  status    FileStatus @default(PENDING)
   ownerId   String
-  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt @default(now())
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt @default(now())
 
-  @@index([ownerId])
+  @@index([ownerId, status])
 }

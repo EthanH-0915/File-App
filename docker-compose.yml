@@ -17,6 +17,9 @@ services:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_URL: http://localhost:3001
+        # Must be a build arg, not env_file: NEXT_PUBLIC_* is inlined into
+        # the client bundle at build time, so a runtime value never reaches it.
+        NEXT_PUBLIC_UPLOAD_MAX_SIZE: "10485760"
     ports:
       - "3000:3000"
     env_file:

@@ -4,6 +4,7 @@ import {
   S3Client,
   GetObjectCommand,
   DeleteObjectCommand,
+  HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -47,13 +48,17 @@ export class S3Service {
       Bucket: this.bucket,
       Key: key,
       Conditions: [
-        ['content-length-range', 0, maxBytes],
+        // Minimum of 1: a zero-byte object would otherwise pass the policy
+        // and be confirmed as a real file with a size the DTO forbids.
+        ['content-length-range', 1, maxBytes],
         ['eq', '$Content-Type', mimeType],
       ],
       Fields: {
         'Content-Type': mimeType,
       },
-      Expires: 60,
+      // Generous enough that a large file on a slow connection still starts
+      // its POST inside the window; a miss strands a PENDING row.
+      Expires: 300,
     });
   }
 
@@ -69,6 +74,26 @@ export class S3Service {
       ResponseContentType: mimeType,
     });
     return getSignedUrl(this.client, command, { expiresIn: 300 });
+  }
+
+  // Returns the object's true size in bytes, or null if it isn't there.
+  // Used to confirm an upload actually landed rather than trusting the
+  // size the client claimed when it asked for the upload URL.
+  async getObjectSize(key: string): Promise<number | null> {
+    try {
+      const head = await this.client.send(
+        new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+      );
+      return head.ContentLength ?? null;
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        (err.name === 'NotFound' || err.name === 'NoSuchKey')
+      ) {
+        return null;
+      }
+      throw err;
+    }
   }
 
   async deleteObject(key: string) {

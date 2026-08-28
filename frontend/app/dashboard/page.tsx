@@ -36,14 +36,27 @@ export default function Home() {
   const fileRef = useRef<HTMLInputElement>(null);
    const router = useRouter();
 
+    // A dead session must not look like an empty drive, so a 401 sends the
+    // user back to login rather than rendering the "no files yet" state.
     const fetchFiles = useCallback(async () => {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files`, {
-        credentials: "include",
-      });
-      if (res.ok) {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files`, {
+          credentials: "include",
+        });
+
+        if (res.status === 401) {
+          router.push("/login");
+          return;
+        }
+        if (!res.ok) {
+          throw new Error("Could not load your files");
+        }
+
         setFiles(await res.json());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not load your files");
       }
-    }, []);
+    }, [router]);
 
     useEffect(() => {
       fetchFiles();
@@ -75,7 +88,7 @@ export default function Home() {
           throw new Error("Could not start upload");
         }
 
-        const { url, fields } = await urlRes.json();
+        const { fileId, url, fields } = await urlRes.json();
 
         const formData = new FormData();
         Object.entries(fields).forEach(([key, value]) => {
@@ -92,7 +105,22 @@ export default function Home() {
           throw new Error("Upload to storage failed");
         }
 
-        await fetchFiles();
+        // The file stays invisible until the backend has verified the object
+        // actually landed in S3 and recorded its real size.
+        const completeRes = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/files/${fileId}/complete`,
+          { method: "POST", credentials: "include" },
+        );
+
+        if (!completeRes.ok) {
+          throw new Error("Could not finish upload");
+        }
+
+        // The completion response is the stored record, with the real size
+        // S3 reported, so there's nothing to re-fetch. Listings are newest
+        // first, so it goes on the front.
+        const created: FileItem = await completeRes.json();
+        setFiles((prev) => [created, ...prev]);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed");
       } finally {
@@ -101,24 +129,48 @@ export default function Home() {
     };
 
     const handleDownload = async (id: string) => {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/${id}/download-url`, {
-        credentials: "include",
-      });
-      if (res.ok) {
+      setError(null);
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/${id}/download-url`, {
+          credentials: "include",
+        });
+        if (!res.ok) {
+          throw new Error("Could not download this file");
+        }
+
         const { url } = await res.json();
-        window.open(url, "_blank");
+
+        // Not window.open: this runs after an await, so the user-gesture
+        // window has closed and popup blockers eat it. The signed URL comes
+        // back with Content-Disposition: attachment, so a plain navigation
+        // downloads the file without leaving the page.
+        const link = document.createElement("a");
+        link.href = url;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not download this file");
       }
     };
 
     const handleDelete = async (id: string) => {
       if (!confirm("Delete this file?")) return;
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/${id}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (res.ok) {
-        await fetchFiles();
+      setError(null);
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/${id}`, {
+          method: "DELETE",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          throw new Error("Could not delete this file");
+        }
+
+        setFiles((prev) => prev.filter((file) => file.id !== id));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not delete this file");
       }
     };
 
@@ -172,6 +224,7 @@ export default function Home() {
           <nav className="p-4 space-y-5">
               <FileInput onFileSelect={file => handleFileSelect(file)}
                 buttonText={uploading ? "Uploading..." : "Upload File"}
+                disabled={uploading}
                 containerClassName="w-full"
                 buttonClassName="w-full text-left px-4 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700 font-medium transition-colors disabled:opacity-50"
               />

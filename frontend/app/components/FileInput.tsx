@@ -7,6 +7,7 @@ type FileInputProps = {
   accept?: string;
   multiple?: boolean;
   buttonText?: string;
+  disabled?: boolean;
   containerClassName?: string;  // class for the container
   buttonClassName?: string;     // class for the button
 };
@@ -16,6 +17,7 @@ export function FileInput({
   accept,
   multiple = false,
   buttonText = "Choose file",
+  disabled = false,
   containerClassName,
   buttonClassName,
 }: FileInputProps) {
@@ -24,6 +26,7 @@ export function FileInput({
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    if (disabled) return;
 
     onFileSelect(files[0]);
     e.target.value = ""; // allow re-selecting same file
@@ -34,6 +37,7 @@ export function FileInput({
       <button
         type="button"
         className={buttonClassName}
+        disabled={disabled}
         onClick={() => inputRef.current?.click()}
       >
         {buttonText}
@@ -44,6 +48,7 @@ export function FileInput({
         ref={inputRef}
         accept={accept}
         multiple={multiple}
+        disabled={disabled}
         onChange={handleChange}
         style={{ display: "none" }}
       />

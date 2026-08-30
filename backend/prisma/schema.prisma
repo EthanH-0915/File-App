@@ -21,6 +21,7 @@ model User {
   updatedAt    DateTime @updatedAt @default(now())
   emailVerified DateTime?
   files        File[]
+  fileShares   FileShare[] // shares granted TO this user
 }
 
 enum FileStatus {
@@ -44,5 +45,28 @@ model File {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt @default(now())
 
+  shares    FileShare[]
+  shareLink ShareLink?
+
   @@index([ownerId, status])
+}
+
+model FileShare {
+  id        String   @id @default(uuid())
+  fileId    String
+  file      File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([fileId, userId]) // one grant per pair; also the "am I shared this" lookup index
+  @@index([userId])          // for listSharedWithMe
+}
+
+model ShareLink {
+  id        String   @id @default(uuid())
+  fileId    String   @unique // DB-level guarantee of "one active link per file"
+  file      File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  createdAt DateTime @default(now())
 }

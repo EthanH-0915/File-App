@@ -13,7 +13,7 @@ import { MAX_UPLOAD_SIZE_BYTES, PENDING_UPLOAD_TTL_MS } from './constants';
 
 // Fields safe to hand back to the client. s3Key and ownerId are internal
 // storage details and deliberately excluded.
-const FILE_SELECT = {
+export const FILE_SELECT = {
   id: true,
   filename: true,
   mimeType: true,
@@ -99,8 +99,8 @@ export class FilesService {
     });
   }
 
-  async getDownloadUrl(ownerId: string, id: string) {
-    const file = await this.findOwnedOrThrow(ownerId, id);
+  async getDownloadUrl(userId: string, id: string) {
+    const file = await this.findAccessibleOrThrow(userId, id);
     if (file.status !== FileStatus.READY) {
       throw new NotFoundException('File not found');
     }
@@ -111,6 +111,14 @@ export class FilesService {
       file.mimeType,
     );
     return { url };
+  }
+
+  // Owner-only access, for SharingService's share-management operations
+  // (create/list/revoke a share or link). Thin wrapper so callers outside
+  // this service can reuse the same not-found/ownership semantics without
+  // findOwnedOrThrow itself becoming public.
+  async getOwnedFile(ownerId: string, id: string) {
+    return this.findOwnedOrThrow(ownerId, id);
   }
 
   async deleteFile(ownerId: string, id: string) {
@@ -158,6 +166,28 @@ export class FilesService {
   private async findOwnedOrThrow(ownerId: string, id: string) {
     const file = await this.prisma.file.findUnique({ where: { id } });
     if (!file || file.ownerId !== ownerId) {
+      throw new NotFoundException('File not found');
+    }
+    return file;
+  }
+
+  // Like findOwnedOrThrow, but also lets someone the file was shared with
+  // through. Both the "doesn't exist" and "exists but not yours/not shared
+  // with you" cases throw the identical exception, so a non-owner still
+  // can't distinguish the two.
+  private async findAccessibleOrThrow(userId: string, id: string) {
+    const file = await this.prisma.file.findUnique({ where: { id } });
+    if (!file) {
+      throw new NotFoundException('File not found');
+    }
+    if (file.ownerId === userId) {
+      return file;
+    }
+
+    const share = await this.prisma.fileShare.findUnique({
+      where: { fileId_userId: { fileId: id, userId } },
+    });
+    if (!share) {
       throw new NotFoundException('File not found');
     }
     return file;

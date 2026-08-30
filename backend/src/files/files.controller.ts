@@ -12,8 +12,10 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { FilesService } from './files.service';
+import { SharingService } from './sharing.service';
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
+import { CreateShareDto } from './dto/create-share.dto';
 
 type AuthedRequest = Request & { user: { userId: string; email: string } };
 
@@ -26,7 +28,10 @@ const FILES_THROTTLE = { default: { limit: 60, ttl: 60_000 } };
 @UseGuards(JwtAuthGuard)
 @Controller('files')
 export class FilesController {
-  constructor(private filesService: FilesService) {}
+  constructor(
+    private filesService: FilesService,
+    private sharingService: SharingService,
+  ) {}
 
   @Post('upload-url')
   createUploadUrl(@Req() req: AuthedRequest, @Body() dto: CreateUploadUrlDto) {
@@ -57,5 +62,57 @@ export class FilesController {
   @Delete(':id')
   remove(@Req() req: AuthedRequest, @Param('id', ParseUUIDPipe) id: string) {
     return this.filesService.deleteFile(req.user.userId, id);
+  }
+
+  @Get('shared-with-me')
+  listSharedWithMe(@Req() req: AuthedRequest) {
+    return this.sharingService.listSharedWithMe(req.user.userId);
+  }
+
+  @Post(':id/shares')
+  shareWithUser(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateShareDto,
+  ) {
+    return this.sharingService.shareWithUser(req.user.userId, id, dto.email);
+  }
+
+  @Get(':id/shares')
+  listShares(@Req() req: AuthedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    return this.sharingService.listShares(req.user.userId, id);
+  }
+
+  @Delete(':id/shares/:shareId')
+  revokeShare(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('shareId', ParseUUIDPipe) shareId: string,
+  ) {
+    return this.sharingService.revokeShare(req.user.userId, id, shareId);
+  }
+
+  @Post(':id/share-link')
+  createShareLink(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.sharingService.getOrCreateShareLink(req.user.userId, id);
+  }
+
+  @Get(':id/share-link')
+  getShareLinkStatus(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.sharingService.getShareLinkStatus(req.user.userId, id);
+  }
+
+  @Delete(':id/share-link')
+  revokeShareLink(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.sharingService.revokeShareLink(req.user.userId, id);
   }
 }

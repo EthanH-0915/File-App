@@ -94,7 +94,7 @@ export default function Home() {
     const handleFileSelect = async (file: File) => {
       setError(null);
 
-      const maxSize = Number(process.env.NEXT_PUBLIC_UPLOAD_MAX_SIZE);
+      const maxSize = 10 * 1024 * 1024;;
       if (maxSize && file.size > maxSize) {
         setError(`File is too large. Max size is ${formatBytes(maxSize)}.`);
         return;

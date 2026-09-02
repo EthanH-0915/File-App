@@ -51,6 +51,21 @@ export class FilesController {
     return this.filesService.listFiles(req.user.userId);
   }
 
+  @Get('recent')
+  listRecent(@Req() req: AuthedRequest) {
+    return this.filesService.listRecent(req.user.userId);
+  }
+
+  @Get('favorites')
+  listFavorites(@Req() req: AuthedRequest) {
+    return this.filesService.listFavorites(req.user.userId);
+  }
+
+  @Get('trash')
+  listTrash(@Req() req: AuthedRequest) {
+    return this.filesService.listTrash(req.user.userId);
+  }
+
   @Get(':id/download-url')
   getDownloadUrl(
     @Req() req: AuthedRequest,
@@ -59,9 +74,33 @@ export class FilesController {
     return this.filesService.getDownloadUrl(req.user.userId, id);
   }
 
+  // Moves the file to Trash. Delete Forever (below) is the real, final delete.
   @Delete(':id')
   remove(@Req() req: AuthedRequest, @Param('id', ParseUUIDPipe) id: string) {
-    return this.filesService.deleteFile(req.user.userId, id);
+    return this.filesService.moveToTrash(req.user.userId, id);
+  }
+
+  @Post(':id/restore')
+  restore(@Req() req: AuthedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    return this.filesService.restoreFromTrash(req.user.userId, id);
+  }
+
+  @Delete(':id/permanent')
+  permanentlyDelete(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.filesService.permanentlyDelete(req.user.userId, id);
+  }
+
+  @Post(':id/favorite')
+  favorite(@Req() req: AuthedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    return this.filesService.favoriteFile(req.user.userId, id);
+  }
+
+  @Delete(':id/favorite')
+  unfavorite(@Req() req: AuthedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    return this.filesService.unfavoriteFile(req.user.userId, id);
   }
 
   @Get('shared-with-me')

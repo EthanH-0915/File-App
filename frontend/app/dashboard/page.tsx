@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from 'next/link'
 import { useRouter } from "next/navigation";
 import React, { useState, useEffect, useCallback } from "react";
-import { Menu, X, Search, FileText, Download, Trash2, Share2, Copy } from 'lucide-react';
+import { Menu, X, Search, FileText, Download, Trash2, Share2, Copy, Star, RotateCcw } from 'lucide-react';
 import { useRef } from "react";
 import { FileInput } from "../components/FileInput";
 
@@ -13,12 +13,40 @@ type FileItem = {
   mimeType: string;
   size: number;
   createdAt: string;
+  isFavorite: boolean;
+  deletedAt: string | null;
 };
 
 type ShareGrant = {
   id: string;
   email: string;
   createdAt: string;
+};
+
+type FilterTab = "mine" | "shared" | "recent" | "favorites" | "trash";
+
+const TAB_ENDPOINTS: Record<FilterTab, string> = {
+  mine: "/files",
+  shared: "/files/shared-with-me",
+  recent: "/files/recent",
+  favorites: "/files/favorites",
+  trash: "/files/trash",
+};
+
+const TAB_TITLES: Record<FilterTab, string> = {
+  mine: "Your Files",
+  shared: "Shared with me",
+  recent: "Recent",
+  favorites: "Favorites",
+  trash: "Trash",
+};
+
+const TAB_EMPTY_STATE: Record<FilterTab, string> = {
+  mine: "No files yet. Upload one to get started.",
+  shared: "No files have been shared with you yet.",
+  recent: "Files you download or open will show up here.",
+  favorites: "Star a file to find it here quickly.",
+  trash: "Trash is empty.",
 };
 
 function formatBytes(bytes: number): string {
@@ -33,22 +61,29 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString();
+}
+
 export default function Home() {
-  const [filter, setFilter] = React.useState<"mine" | "shared">("mine");
+  const [filter, setFilter] = React.useState<FilterTab>("mine");
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
-  const [files, setFiles] = useState<FileItem[]>([]);
-  const [sharedFiles, setSharedFiles] = useState<FileItem[]>([]);
+  const [visibleFiles, setVisibleFiles] = useState<FileItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shareModalFile, setShareModalFile] = useState<FileItem | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
    const router = useRouter();
 
+    // Refetches whichever tab is currently active. An action in one tab
+    // (download, trash, favorite) routinely invalidates another, so each
+    // tab just asks for fresh data whenever it becomes active rather than
+    // trying to keep several cached lists in sync with each other.
     // A dead session must not look like an empty drive, so a 401 sends the
     // user back to login rather than rendering the "no files yet" state.
-    const fetchFiles = useCallback(async () => {
+    const fetchActiveTab = useCallback(async () => {
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files`, {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${TAB_ENDPOINTS[filter]}`, {
           credentials: "include",
         });
 
@@ -60,36 +95,15 @@ export default function Home() {
           throw new Error("Could not load your files");
         }
 
-        setFiles(await res.json());
+        setVisibleFiles(await res.json());
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not load your files");
       }
-    }, [router]);
-
-    const fetchSharedFiles = useCallback(async () => {
-      try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/shared-with-me`, {
-          credentials: "include",
-        });
-
-        if (res.status === 401) {
-          router.push("/login");
-          return;
-        }
-        if (!res.ok) {
-          throw new Error("Could not load files shared with you");
-        }
-
-        setSharedFiles(await res.json());
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not load files shared with you");
-      }
-    }, [router]);
+    }, [filter, router]);
 
     useEffect(() => {
-      fetchFiles();
-      fetchSharedFiles();
-    }, [fetchFiles, fetchSharedFiles]);
+      fetchActiveTab();
+    }, [fetchActiveTab]);
 
     const handleFileSelect = async (file: File) => {
       setError(null);
@@ -147,9 +161,12 @@ export default function Home() {
 
         // The completion response is the stored record, with the real size
         // S3 reported, so there's nothing to re-fetch. Listings are newest
-        // first, so it goes on the front.
+        // first, so it goes on the front. A freshly-uploaded file can't
+        // legitimately belong to any other tab yet.
         const created: FileItem = await completeRes.json();
-        setFiles((prev) => [created, ...prev]);
+        if (filter === "mine") {
+          setVisibleFiles((prev) => [created, ...prev]);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed");
       } finally {
@@ -185,7 +202,7 @@ export default function Home() {
     };
 
     const handleDelete = async (id: string) => {
-      if (!confirm("Delete this file?")) return;
+      if (!confirm("Move this file to Trash?")) return;
 
       setError(null);
       try {
@@ -197,15 +214,75 @@ export default function Home() {
           throw new Error("Could not delete this file");
         }
 
-        setFiles((prev) => prev.filter((file) => file.id !== id));
+        setVisibleFiles((prev) => prev.filter((file) => file.id !== id));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not delete this file");
       }
     };
 
+    const handleToggleFavorite = async (file: FileItem) => {
+      setError(null);
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/${file.id}/favorite`, {
+          method: file.isFavorite ? "DELETE" : "POST",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          throw new Error("Could not update favorite");
+        }
 
-    const visibleFiles = filter === "shared" ? sharedFiles : files;
-    const canManage = filter === "mine";
+        // Un-favoriting removes it from the Favorites tab specifically;
+        // everywhere else it just flips the star.
+        if (filter === "favorites" && file.isFavorite) {
+          setVisibleFiles((prev) => prev.filter((f) => f.id !== file.id));
+        } else {
+          setVisibleFiles((prev) =>
+            prev.map((f) => (f.id === file.id ? { ...f, isFavorite: !f.isFavorite } : f)),
+          );
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not update favorite");
+      }
+    };
+
+    const handleRestore = async (id: string) => {
+      setError(null);
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/${id}/restore`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          throw new Error("Could not restore this file");
+        }
+
+        setVisibleFiles((prev) => prev.filter((f) => f.id !== id));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not restore this file");
+      }
+    };
+
+    const handlePermanentDelete = async (id: string) => {
+      if (!confirm("Permanently delete this file? This cannot be undone.")) return;
+
+      setError(null);
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/${id}/permanent`, {
+          method: "DELETE",
+          credentials: "include",
+        });
+        if (!res.ok) {
+          throw new Error("Could not permanently delete this file");
+        }
+
+        setVisibleFiles((prev) => prev.filter((f) => f.id !== id));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not permanently delete this file");
+      }
+    };
+
+    const canManage = filter === "mine" || filter === "recent" || filter === "favorites";
+    const isTrashView = filter === "trash";
 
     const handleLogout = async (e: React.FormEvent) => {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/logout`, {
@@ -276,9 +353,15 @@ export default function Home() {
             >
               Shared with me
             </button>
-            {['Recent', 'Favorites', 'Trash'].map((item) => (
-              <button key={item} className="w-full text-left px-4 py-3 rounded-xl text-gray-600 hover:bg-blue-50 hover:text-blue-600 font-medium transition-colors">
-                {item}
+            {(["recent", "favorites", "trash"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setFilter(tab)}
+                className={`w-full text-left px-4 py-3 rounded-xl font-medium transition-colors ${
+                  filter === tab ? "bg-blue-50 text-blue-600" : "text-gray-600 hover:bg-blue-50 hover:text-blue-600"
+                }`}
+              >
+                {TAB_TITLES[tab]}
               </button>
             ))}
             <button
@@ -293,9 +376,7 @@ export default function Home() {
         <main className="flex-1 p-4 md:p-8 overflow-auto">
           <div className="max-w-6xl mx-auto">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-semibold text-gray-800">
-                {filter === "shared" ? "Shared with me" : "Your Files"}
-              </h2>
+              <h2 className="text-2xl font-semibold text-gray-800">{TAB_TITLES[filter]}</h2>
             </div>
 
             {error && (
@@ -305,9 +386,7 @@ export default function Home() {
             )}
 
             {visibleFiles.length === 0 ? (
-              <p className="text-gray-500">
-                {filter === "shared" ? "No files have been shared with you yet." : "No files yet. Upload one to get started."}
-              </p>
+              <p className="text-gray-500">{TAB_EMPTY_STATE[filter]}</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {visibleFiles.map((file) => (
@@ -317,30 +396,65 @@ export default function Home() {
                     </div>
                     <span className="text-sm font-medium text-gray-700 text-center break-all">{file.filename}</span>
                     <span className="text-xs text-gray-400">{formatBytes(file.size)}</span>
+                    {isTrashView && file.deletedAt && (
+                      <span className="text-xs text-gray-400">Deleted {formatDate(file.deletedAt)}</span>
+                    )}
                     <div className="flex gap-2">
-                      <button
-                        onClick={() => handleDownload(file.id)}
-                        className="p-2 rounded-lg text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                        aria-label={`Download ${file.filename}`}
-                      >
-                        <Download size={18} />
-                      </button>
-                      {canManage && (
+                      {isTrashView ? (
                         <>
                           <button
-                            onClick={() => setShareModalFile(file)}
+                            onClick={() => handleRestore(file.id)}
                             className="p-2 rounded-lg text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                            aria-label={`Share ${file.filename}`}
+                            aria-label={`Restore ${file.filename}`}
                           >
-                            <Share2 size={18} />
+                            <RotateCcw size={18} />
                           </button>
                           <button
-                            onClick={() => handleDelete(file.id)}
+                            onClick={() => handlePermanentDelete(file.id)}
                             className="p-2 rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
-                            aria-label={`Delete ${file.filename}`}
+                            aria-label={`Permanently delete ${file.filename}`}
                           >
                             <Trash2 size={18} />
                           </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => handleDownload(file.id)}
+                            className="p-2 rounded-lg text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                            aria-label={`Download ${file.filename}`}
+                          >
+                            <Download size={18} />
+                          </button>
+                          {canManage && (
+                            <>
+                              <button
+                                onClick={() => handleToggleFavorite(file)}
+                                className={`p-2 rounded-lg transition-colors ${
+                                  file.isFavorite
+                                    ? "text-yellow-500 hover:bg-yellow-50"
+                                    : "text-gray-500 hover:bg-blue-50 hover:text-blue-600"
+                                }`}
+                                aria-label={file.isFavorite ? `Unfavorite ${file.filename}` : `Favorite ${file.filename}`}
+                              >
+                                <Star size={18} fill={file.isFavorite ? "currentColor" : "none"} />
+                              </button>
+                              <button
+                                onClick={() => setShareModalFile(file)}
+                                className="p-2 rounded-lg text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                                aria-label={`Share ${file.filename}`}
+                              >
+                                <Share2 size={18} />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(file.id)}
+                                className="p-2 rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
+                                aria-label={`Delete ${file.filename}`}
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </>
+                          )}
                         </>
                       )}
                     </div>

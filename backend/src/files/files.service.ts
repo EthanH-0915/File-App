@@ -9,7 +9,11 @@ import { FileStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from './s3.service';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
-import { MAX_UPLOAD_SIZE_BYTES, PENDING_UPLOAD_TTL_MS } from './constants';
+import {
+  MAX_UPLOAD_SIZE_BYTES,
+  PENDING_UPLOAD_TTL_MS,
+  RECENT_FILES_LIMIT,
+} from './constants';
 
 // Fields safe to hand back to the client. s3Key and ownerId are internal
 // storage details and deliberately excluded.
@@ -19,6 +23,8 @@ export const FILE_SELECT = {
   mimeType: true,
   size: true,
   createdAt: true,
+  isFavorite: true,
+  deletedAt: true,
 } as const;
 
 @Injectable()
@@ -93,7 +99,7 @@ export class FilesService {
 
   async listFiles(ownerId: string) {
     return this.prisma.file.findMany({
-      where: { ownerId, status: FileStatus.READY },
+      where: { ownerId, status: FileStatus.READY, deletedAt: null },
       orderBy: { createdAt: 'desc' },
       select: FILE_SELECT,
     });
@@ -101,7 +107,7 @@ export class FilesService {
 
   async getDownloadUrl(userId: string, id: string) {
     const file = await this.findAccessibleOrThrow(userId, id);
-    if (file.status !== FileStatus.READY) {
+    if (file.status !== FileStatus.READY || file.deletedAt) {
       throw new NotFoundException('File not found');
     }
 
@@ -110,7 +116,17 @@ export class FilesService {
       file.filename,
       file.mimeType,
     );
+    await this.touchLastAccessed(file.id);
     return { url };
+  }
+
+  // Bumps "last used" so the file surfaces in Recent. Called for any real
+  // download — the owner's own, a share grantee's, or a public link's.
+  async touchLastAccessed(id: string) {
+    await this.prisma.file.update({
+      where: { id },
+      data: { lastAccessedAt: new Date() },
+    });
   }
 
   // Owner-only access, for SharingService's share-management operations
@@ -121,16 +137,106 @@ export class FilesService {
     return this.findOwnedOrThrow(ownerId, id);
   }
 
-  async deleteFile(ownerId: string, id: string) {
+  // The existing Delete button: moves a file to Trash rather than deleting
+  // it for real. permanentlyDelete is what actually removes it.
+  async moveToTrash(ownerId: string, id: string) {
     const file = await this.findOwnedOrThrow(ownerId, id);
+    if (file.deletedAt) {
+      throw new NotFoundException('File not found');
+    }
+    return this.prisma.file.update({
+      where: { id: file.id },
+      data: { deletedAt: new Date() },
+      select: FILE_SELECT,
+    });
+  }
+
+  async restoreFromTrash(ownerId: string, id: string) {
+    const file = await this.findOwnedOrThrow(ownerId, id);
+    if (!file.deletedAt) {
+      throw new NotFoundException('File not found');
+    }
+    return this.prisma.file.update({
+      where: { id: file.id },
+      data: { deletedAt: null },
+      select: FILE_SELECT,
+    });
+  }
+
+  // The real, final delete — only reachable from Trash.
+  async permanentlyDelete(ownerId: string, id: string) {
+    const file = await this.findOwnedOrThrow(ownerId, id);
+    if (!file.deletedAt) {
+      throw new NotFoundException('File not found');
+    }
     await this.discard(file.id, file.s3Key);
     return { success: true };
   }
 
+  async listTrash(ownerId: string) {
+    return this.prisma.file.findMany({
+      where: { ownerId, deletedAt: { not: null } },
+      orderBy: { deletedAt: 'desc' },
+      select: FILE_SELECT,
+    });
+  }
+
+  async favoriteFile(ownerId: string, id: string) {
+    const file = await this.findOwnedOrThrow(ownerId, id);
+    if (file.deletedAt) {
+      throw new NotFoundException('File not found');
+    }
+    return this.prisma.file.update({
+      where: { id: file.id },
+      data: { isFavorite: true },
+      select: FILE_SELECT,
+    });
+  }
+
+  async unfavoriteFile(ownerId: string, id: string) {
+    const file = await this.findOwnedOrThrow(ownerId, id);
+    if (file.deletedAt) {
+      throw new NotFoundException('File not found');
+    }
+    return this.prisma.file.update({
+      where: { id: file.id },
+      data: { isFavorite: false },
+      select: FILE_SELECT,
+    });
+  }
+
+  async listFavorites(ownerId: string) {
+    return this.prisma.file.findMany({
+      where: {
+        ownerId,
+        isFavorite: true,
+        deletedAt: null,
+        status: FileStatus.READY,
+      },
+      orderBy: { createdAt: 'desc' },
+      select: FILE_SELECT,
+    });
+  }
+
+  async listRecent(ownerId: string) {
+    return this.prisma.file.findMany({
+      where: {
+        ownerId,
+        deletedAt: null,
+        status: FileStatus.READY,
+        lastAccessedAt: { not: null },
+      },
+      orderBy: { lastAccessedAt: 'desc' },
+      take: RECENT_FILES_LIMIT,
+      select: FILE_SELECT,
+    });
+  }
+
   // Removes the S3 object before the row, so a failed delete leaves a row
   // that still names the key and can be retried, rather than an orphaned
-  // object no record points at any more.
-  private async discard(id: string, s3Key: string) {
+  // object no record points at any more. Not private: TrashCleanupService's
+  // cron reuses this exact same S3-then-DB logic for expired trash.
+  async discard(id: string, s3Key: string) {
     await this.s3.deleteObject(s3Key);
     await this.prisma.file.delete({ where: { id } });
   }

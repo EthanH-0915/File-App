@@ -9,3 +9,11 @@ export const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024;
 // abandoned upload and reaped. Must comfortably exceed the presigned POST
 // expiry plus the time a slow client needs to finish transferring.
 export const PENDING_UPLOAD_TTL_MS = 60 * 60 * 1000;
+
+// Cap for the "Recent" view: enough to be useful without pagination, small
+// enough to keep the query and the grid cheap to render.
+export const RECENT_FILES_LIMIT = 25;
+
+// How long a soft-deleted file sits in Trash before the cleanup cron purges
+// it for real. Matches Google Drive's convention.
+export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;

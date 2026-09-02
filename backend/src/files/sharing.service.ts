@@ -25,7 +25,7 @@ export class SharingService {
 
   async shareWithUser(ownerId: string, fileId: string, email: string) {
     const file = await this.filesService.getOwnedFile(ownerId, fileId);
-    if (file.status !== FileStatus.READY) {
+    if (file.status !== FileStatus.READY || file.deletedAt) {
       throw new BadRequestException('File is not ready to share');
     }
 
@@ -77,7 +77,7 @@ export class SharingService {
 
   async listSharedWithMe(userId: string) {
     const shares = await this.prisma.fileShare.findMany({
-      where: { userId, file: { status: FileStatus.READY } },
+      where: { userId, file: { status: FileStatus.READY, deletedAt: null } },
       include: { file: { select: FILE_SELECT } },
       orderBy: { createdAt: 'desc' },
     });
@@ -87,7 +87,7 @@ export class SharingService {
 
   async getOrCreateShareLink(ownerId: string, fileId: string) {
     const file = await this.filesService.getOwnedFile(ownerId, fileId);
-    if (file.status !== FileStatus.READY) {
+    if (file.status !== FileStatus.READY || file.deletedAt) {
       throw new BadRequestException('File is not ready to share');
     }
 
@@ -133,7 +133,7 @@ export class SharingService {
       include: { file: true },
     });
 
-    if (!link || link.file.status !== FileStatus.READY) {
+    if (!link || link.file.status !== FileStatus.READY || link.file.deletedAt) {
       throw new NotFoundException('Link not found or has been revoked');
     }
 
@@ -149,7 +149,7 @@ export class SharingService {
       include: { file: true },
     });
 
-    if (!link || link.file.status !== FileStatus.READY) {
+    if (!link || link.file.status !== FileStatus.READY || link.file.deletedAt) {
       throw new NotFoundException('Link not found or has been revoked');
     }
 
@@ -158,6 +158,7 @@ export class SharingService {
       link.file.filename,
       link.file.mimeType,
     );
+    await this.filesService.touchLastAccessed(link.file.id);
     return { url };
   }
 }

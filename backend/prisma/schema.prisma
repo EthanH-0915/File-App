@@ -45,10 +45,17 @@ model File {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt @default(now())
 
+  isFavorite     Boolean   @default(false)
+  lastAccessedAt DateTime?
+  deletedAt      DateTime?
+
   shares    FileShare[]
   shareLink ShareLink?
 
   @@index([ownerId, status])
+  @@index([ownerId, deletedAt])              // listFiles/listRecent/listFavorites (IS NULL) and listTrash (IS NOT NULL)
+  @@index([ownerId, isFavorite, deletedAt])  // matches listFavorites' where-clause shape
+  @@index([deletedAt])                       // the cron scans globally, no ownerId at all
 }
 
 model FileShare {

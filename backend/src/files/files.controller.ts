@@ -99,7 +99,10 @@ export class FilesController {
   }
 
   @Delete(':id/favorite')
-  unfavorite(@Req() req: AuthedRequest, @Param('id', ParseUUIDPipe) id: string) {
+  unfavorite(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.filesService.unfavoriteFile(req.user.userId, id);
   }
 
@@ -118,7 +121,10 @@ export class FilesController {
   }
 
   @Get(':id/shares')
-  listShares(@Req() req: AuthedRequest, @Param('id', ParseUUIDPipe) id: string) {
+  listShares(
+    @Req() req: AuthedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.sharingService.listShares(req.user.userId, id);
   }
 

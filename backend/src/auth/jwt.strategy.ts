@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import type { Request } from 'express';
+import type { JwtPayload } from './jwt-payload';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -13,13 +15,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
-        (req) => req?.cookies?.token, // read from cookie
+        // read from cookie. cookie-parser types `cookies` as
+        // Record<string, any>, so narrow it rather than leak an `any`.
+        (req: Request): string | null => {
+          const cookies = req.cookies as
+            | Record<string, string | undefined>
+            | undefined;
+          return cookies?.token ?? null;
+        },
       ]),
       secretOrKey: secret,
     });
   }
 
-  async validate(payload: any) {
+  validate(payload: JwtPayload) {
     return { userId: payload.sub, email: payload.email };
   }
 }

@@ -1,7 +1,12 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ConflictException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import * as bcrypt from 'bcrypt';
+import type { JwtPayload } from './jwt-payload';
 
 // Hash of a fixed, unused password. Compared against when no user/passwordHash
 // exists, so a login attempt for a nonexistent email takes the same time as one
@@ -41,13 +46,13 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const newUser = await this.usersService.createUser(email, hashedPassword);
-   
+
     return newUser;
   }
 
-  async verifyToken(token: string) {
+  verifyToken(token: string): JwtPayload {
     try {
-      return this.jwtService.verify(token);
+      return this.jwtService.verify<JwtPayload>(token);
     } catch {
       throw new UnauthorizedException('Invalid token');
     }

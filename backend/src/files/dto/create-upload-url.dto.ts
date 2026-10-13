@@ -1,4 +1,11 @@
-import { IsString, IsNotEmpty, IsInt, Min, Max, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsInt,
+  Min,
+  Max,
+  MaxLength,
+} from 'class-validator';
 import { MAX_UPLOAD_SIZE_BYTES } from '../constants';
 
 export class CreateUploadUrlDto {

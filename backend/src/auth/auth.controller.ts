@@ -1,4 +1,12 @@
-import { Controller, Post, Get, Res, Req, Body, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Res,
+  Req,
+  Body,
+  UseGuards,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Response, Request } from 'express';
 import { AuthService } from './auth.service';
@@ -22,8 +30,14 @@ export class AuthController {
 
   @Throttle(AUTH_THROTTLE)
   @Post('login')
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
-    const { token } = await this.authService.validateUser(dto.email, dto.password);
+  async login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { token } = await this.authService.validateUser(
+      dto.email,
+      dto.password,
+    );
 
     // Set JWT as cookie
     res.cookie('token', token, {
@@ -38,7 +52,7 @@ export class AuthController {
   }
 
   @Post('logout')
-  async logout(@Res({ passthrough: true }) res: Response) {
+  logout(@Res({ passthrough: true }) res: Response) {
     res.clearCookie('token');
     return { message: 'Logged out' };
   }

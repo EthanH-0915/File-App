@@ -22,8 +22,8 @@ services:
         NEXT_PUBLIC_UPLOAD_MAX_SIZE: "10485760"
     ports:
       - "3000:3000"
-    env_file:
-      - ./frontend/.env.local
+    # No env_file here: the frontend needs no runtime .env. NEXT_PUBLIC_* is
+    # inlined at build time (see args above) and INTERNAL_API_URL is set below.
     environment:
       # used by middleware.ts for server-to-server calls, where
       # "localhost" would otherwise resolve to the frontend container itself

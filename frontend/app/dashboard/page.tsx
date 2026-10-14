@@ -1,10 +1,7 @@
 "use client"
-import Image from "next/image";
-import Link from 'next/link'
 import { useRouter } from "next/navigation";
 import React, { useState, useEffect, useCallback } from "react";
 import { Menu, X, Search, FileText, Download, Trash2, Share2, Copy, Star, RotateCcw } from 'lucide-react';
-import { useRef } from "react";
 import { FileInput } from "../components/FileInput";
 
 type FileItem = {
@@ -49,6 +46,12 @@ const TAB_EMPTY_STATE: Record<FilterTab, string> = {
   trash: "Trash is empty.",
 };
 
+// Mirrors the backend's MAX_UPLOAD_SIZE_BYTES so an oversized file is rejected
+// before it costs an upload-url round trip. The backend DTO is still the real
+// enforcement: it refuses anything larger whatever this says.
+const MAX_UPLOAD_SIZE =
+  Number(process.env.NEXT_PUBLIC_UPLOAD_MAX_SIZE) || 10 * 1024 * 1024;
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KB", "MB", "GB"];
@@ -72,8 +75,8 @@ export default function Home() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shareModalFile, setShareModalFile] = useState<FileItem | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-   const router = useRouter();
+  const [query, setQuery] = useState("");
+  const router = useRouter();
 
     // Refetches whichever tab is currently active. An action in one tab
     // (download, trash, favorite) routinely invalidates another, so each
@@ -108,9 +111,10 @@ export default function Home() {
     const handleFileSelect = async (file: File) => {
       setError(null);
 
-      const maxSize = 10 * 1024 * 1024;;
-      if (maxSize && file.size > maxSize) {
-        setError(`File is too large. Max size is ${formatBytes(maxSize)}.`);
+      if (file.size > MAX_UPLOAD_SIZE) {
+        setError(
+          `File is too large. Max size is ${formatBytes(MAX_UPLOAD_SIZE)}.`,
+        );
         return;
       }
 
@@ -284,7 +288,17 @@ export default function Home() {
     const canManage = filter === "mine" || filter === "recent" || filter === "favorites";
     const isTrashView = filter === "trash";
 
-    const handleLogout = async (e: React.FormEvent) => {
+    // Client-side filter over the tab that is already loaded. Deliberately no
+    // API call: there is no search endpoint, and every list view is fetched in
+    // full, so this only narrows what the user can already see.
+    const search = query.trim().toLowerCase();
+    const matchingFiles = search
+      ? visibleFiles.filter((file) =>
+          file.filename.toLowerCase().includes(search),
+        )
+      : visibleFiles;
+
+    const handleLogout = async () => {
     const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/logout`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -314,8 +328,11 @@ export default function Home() {
           <div className="relative">
             <Search className="absolute left-3 top-2.5 text-gray-400 size-5" />
             <input
-              type="text"
+              type="search"
               placeholder="Search files..."
+              aria-label="Search files"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
               className="w-full h-10 rounded-xl bg-gray-50 pl-10 pr-4 focus:ring-2 focus:ring-blue-500 outline-none transition-all"
             />
           </div>
@@ -385,11 +402,15 @@ export default function Home() {
               </div>
             )}
 
-            {visibleFiles.length === 0 ? (
-              <p className="text-gray-500">{TAB_EMPTY_STATE[filter]}</p>
+            {matchingFiles.length === 0 ? (
+              <p className="text-gray-500">
+                {search
+                  ? `No files match "${query.trim()}".`
+                  : TAB_EMPTY_STATE[filter]}
+              </p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {visibleFiles.map((file) => (
+                {matchingFiles.map((file) => (
                   <div key={file.id} className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow flex flex-col items-center justify-center gap-3">
                     <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600">
                       <FileText />

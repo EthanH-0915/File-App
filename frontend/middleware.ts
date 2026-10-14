@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const PROTECTED_ROUTES = ["/dashboard", "/files"];
+// Signing in is the one thing someone already signed in cannot usefully do,
+// so these bounce to the dashboard instead of rendering an empty form.
+const AUTH_ROUTES = ["/login", "/signup"];
 
 // Asks the backend to verify the JWT (signature + expiry), rather than
 // trusting that a "token" cookie merely being present means it's valid.
@@ -28,11 +31,24 @@ async function isAuthenticated(req: NextRequest): Promise<boolean> {
 export async function middleware(req: NextRequest) {
   const url = req.nextUrl.clone();
 
-  if (PROTECTED_ROUTES.some((route) => url.pathname.startsWith(route))) {
-    if (!(await isAuthenticated(req))) {
-      url.pathname = "/login";
-      return NextResponse.redirect(url);
-    }
+  const isProtected = PROTECTED_ROUTES.some((route) => url.pathname.startsWith(route));
+  const isAuthRoute = AUTH_ROUTES.some((route) => url.pathname.startsWith(route));
+
+  // Nothing to decide, and no reason to spend a round trip on /auth/me.
+  if (!isProtected && !isAuthRoute) {
+    return NextResponse.next();
+  }
+
+  const authenticated = await isAuthenticated(req);
+
+  if (isProtected && !authenticated) {
+    url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  if (isAuthRoute && authenticated) {
+    url.pathname = "/dashboard";
+    return NextResponse.redirect(url);
   }
 
   return NextResponse.next();
@@ -42,4 +58,3 @@ export async function middleware(req: NextRequest) {
 export const config = {
   matcher: ["/dashboard/:path*", "/files/:path*", "/login", "/signup"],
 };
-

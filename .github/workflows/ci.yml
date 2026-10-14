@@ -1,0 +1,188 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: nothing here writes to the repository.
+permissions:
+  contents: read
+
+# A newer push to the same ref makes an in-flight run obsolete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches the node:22-alpine base image both Dockerfiles use. The backend
+  # needs >=22.12 at runtime: @nestjs/schedule v12 is ESM-only and is loaded
+  # from CommonJS via Node's require(esm) support.
+  NODE_VERSION: "22"
+
+jobs:
+  backend:
+    name: Backend (typecheck, lint, test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # None of these steps touch a database, but the Prisma CLI expects the
+      # variable its schema references to be defined.
+      DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      # Prisma Client is generated code: @prisma/client exposes no model types
+      # until this runs, so both the typecheck and the build depend on it.
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # lint:ci, not lint: the lint script passes --fix, which in CI would
+      # rewrite files and then report success instead of failing.
+      - name: Lint
+        run: npm run lint:ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  frontend:
+    name: Frontend (typecheck, lint, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      # NEXT_PUBLIC_* is inlined into the client bundle at build time, and CI
+      # has no .env, so a placeholder keeps the build deterministic.
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint:ci
+
+      - name: Build
+        run: npm run build
+
+      # No test step yet: the frontend has no test runner configured.
+      # Add `npm test` here once one is.
+
+  backend-smoke:
+    name: Backend smoke (migrate + boot)
+    runs-on: ubuntu-latest
+    # Don't spend a database on a tree that already failed the cheap checks.
+    needs: backend
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: drive_clone_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d drive_clone_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drive_clone_test
+      JWT_SECRET: ci-only-value-not-a-real-secret
+      # S3Service asserts these are present when it is constructed, but makes
+      # no AWS calls during boot, so placeholders are enough to get the app up.
+      AWS_REGION: us-east-1
+      AWS_S3_BUCKET: ci-placeholder
+      AWS_ACCESS_KEY_ID: ci-placeholder
+      AWS_SECRET_ACCESS_KEY: ci-placeholder
+      PORT: "3001"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      # Proves the migration history still applies cleanly to an empty database.
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+
+      - name: Build
+        run: npm run build
+
+      # The unit suite covers one trivial controller, so this is the only check
+      # that the module graph actually wires together: a missing provider, a
+      # bad module import or a failed Prisma connection all surface here.
+      # Mirrors the `start:prod` script, run directly so the PID is the app's.
+      - name: Boot the app
+        run: |
+          node dist/src/main.js > boot.log 2>&1 &
+          APP_PID=$!
+          for _ in $(seq 1 45); do
+            if grep -q "Nest application successfully started" boot.log; then
+              echo "Application started successfully."
+              kill "$APP_PID" 2>/dev/null || true
+              exit 0
+            fi
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "::error::Application exited before finishing startup."
+              cat boot.log
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Timed out waiting for the application to start."
+          cat boot.log
+          kill "$APP_PID" 2>/dev/null || true
+          exit 1
+
+  compose:
+    name: docker-compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The step the README tells a new contributor to run. Doing it here also
+      # proves .env.example alone is enough to make the compose file valid.
+      - name: Create backend/.env from the example
+        run: cp backend/.env.example backend/.env
+
+      - name: Validate compose file
+        run: docker compose config --quiet

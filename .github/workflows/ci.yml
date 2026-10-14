@@ -62,7 +62,7 @@ jobs:
         run: npm run build
 
   frontend:
-    name: Frontend (typecheck, lint, build)
+    name: Frontend (typecheck, lint, test, build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -88,11 +88,11 @@ jobs:
       - name: Lint
         run: npm run lint:ci
 
+      - name: Tests
+        run: npm test
+
       - name: Build
         run: npm run build
-
-      # No test step yet: the frontend has no test runner configured.
-      # Add `npm test` here once one is.
 
   backend-smoke:
     name: Backend smoke (migrate + boot)

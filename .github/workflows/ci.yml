@@ -32,7 +32,7 @@ jobs:
       # variable its schema references to be defined.
       DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -72,7 +72,7 @@ jobs:
       # has no .env, so a placeholder keeps the build deterministic.
       NEXT_PUBLIC_API_URL: http://localhost:3001
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -127,7 +127,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ci-placeholder
       PORT: "3001"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -177,7 +177,7 @@ jobs:
     name: docker-compose config
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The step the README tells a new contributor to run. Doing it here also
       # proves .env.example alone is enough to make the compose file valid.

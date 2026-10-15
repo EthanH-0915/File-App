@@ -3,6 +3,7 @@ import { useRouter } from "next/navigation";
 import React, { useState, useEffect, useCallback } from "react";
 import { Menu, X, Search, FileText, Download, Trash2, Share2, Copy, Star, RotateCcw } from 'lucide-react';
 import { FileInput } from "../components/FileInput";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 type FileItem = {
   id: string;
@@ -19,6 +20,8 @@ type ShareGrant = {
   email: string;
   createdAt: string;
 };
+
+type PendingDelete = { kind: "trash" | "permanent"; file: FileItem };
 
 type FilterTab = "mine" | "shared" | "recent" | "favorites" | "trash";
 
@@ -76,6 +79,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [shareModalFile, setShareModalFile] = useState<FileItem | null>(null);
   const [query, setQuery] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const router = useRouter();
 
     // Refetches whichever tab is currently active. An action in one tab
@@ -206,8 +211,6 @@ export default function Home() {
     };
 
     const handleDelete = async (id: string) => {
-      if (!confirm("Move this file to Trash?")) return;
-
       setError(null);
       try {
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/${id}`, {
@@ -267,8 +270,6 @@ export default function Home() {
     };
 
     const handlePermanentDelete = async (id: string) => {
-      if (!confirm("Permanently delete this file? This cannot be undone.")) return;
-
       setError(null);
       try {
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/files/${id}/permanent`, {
@@ -282,6 +283,25 @@ export default function Home() {
         setVisibleFiles((prev) => prev.filter((f) => f.id !== id));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not permanently delete this file");
+      }
+    };
+
+    const cancelPendingDelete = useCallback(() => setPendingDelete(null), []);
+
+    // The dialog stays open (with its buttons disabled) until the request
+    // settles, so a slow delete can't be confirmed twice.
+    const confirmPendingDelete = async () => {
+      if (!pendingDelete) return;
+      setDeleting(true);
+      try {
+        if (pendingDelete.kind === "trash") {
+          await handleDelete(pendingDelete.file.id);
+        } else {
+          await handlePermanentDelete(pendingDelete.file.id);
+        }
+      } finally {
+        setDeleting(false);
+        setPendingDelete(null);
       }
     };
 
@@ -431,7 +451,7 @@ export default function Home() {
                             <RotateCcw size={18} />
                           </button>
                           <button
-                            onClick={() => handlePermanentDelete(file.id)}
+                            onClick={() => setPendingDelete({ kind: "permanent", file })}
                             className="p-2 rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
                             aria-label={`Permanently delete ${file.filename}`}
                           >
@@ -468,7 +488,7 @@ export default function Home() {
                                 <Share2 size={18} />
                               </button>
                               <button
-                                onClick={() => handleDelete(file.id)}
+                                onClick={() => setPendingDelete({ kind: "trash", file })}
                                 className="p-2 rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
                                 aria-label={`Delete ${file.filename}`}
                               >
@@ -488,6 +508,24 @@ export default function Home() {
 
         {shareModalFile && (
           <ShareModal file={shareModalFile} onClose={() => setShareModalFile(null)} />
+        )}
+
+        {pendingDelete && (
+          <ConfirmDialog
+            title={pendingDelete.kind === "trash" ? "Move to Trash?" : "Delete forever?"}
+            message={
+              pendingDelete.kind === "trash" ? (
+                <>&ldquo;{pendingDelete.file.filename}&rdquo; will be moved to Trash. You can restore it from there.</>
+              ) : (
+                <>&ldquo;{pendingDelete.file.filename}&rdquo; will be permanently deleted. This cannot be undone.</>
+              )
+            }
+            confirmText={pendingDelete.kind === "trash" ? "Move to Trash" : "Delete forever"}
+            destructive
+            busy={deleting}
+            onConfirm={confirmPendingDelete}
+            onCancel={cancelPendingDelete}
+          />
         )}
 
         {isMenuOpen && (

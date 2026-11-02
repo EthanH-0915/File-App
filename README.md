@@ -1,4 +1,4 @@
-# refactored-octo-garbanzo
+# File-App
 
 A Google Drive clone: upload, organize, and share files, with S3-backed storage and JWT authentication.
 
